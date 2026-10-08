@@ -12,18 +12,14 @@ public class FinnhubClient {
         void onError(String error);
     }
 
-    private final String apiKey;
-
-    public FinnhubClient(String apiKey) {
-        this.apiKey = apiKey;
-    }
-
     public void getForexCandles(Callback callback) {
 
         new Thread(() -> {
             HttpURLConnection connection = null;
 
             try {
+                String apiKey = BuildConfig.FINNHUB_API_KEY;
+
                 String urlString =
                         "https://finnhub.io/api/v1/forex/candle" +
                         "?symbol=OANDA:EUR_USD" +
@@ -75,8 +71,9 @@ public class FinnhubClient {
 
             } catch (Exception e) {
                 callback.onError(
-                        e.getClass().getSimpleName() +
-                        ": " + e.getMessage()
+                        e.getClass().getSimpleName()
+                                + ": "
+                                + e.getMessage()
                 );
 
             } finally {
