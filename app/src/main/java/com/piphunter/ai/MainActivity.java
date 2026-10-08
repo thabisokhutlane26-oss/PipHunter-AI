@@ -9,6 +9,9 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 public class MainActivity extends Activity {
 
     private int dp(float value) {
@@ -41,26 +44,6 @@ public class MainActivity extends Activity {
         final int red = Color.rgb(245, 80, 90);
         final int yellow = Color.rgb(255, 195, 70);
 
-        /*
-         * TEST VALUES ONLY.
-         * These are NOT live market prices.
-         * They are used to verify that the SignalEngine
-         * can analyze conditions and return a result.
-         */
-        double testPrice = 1.1000;
-        double testFastAverage = 1.1010;
-        double testSlowAverage = 1.0990;
-        double testRsi = 58.0;
-
-        SignalEngine engine = new SignalEngine();
-
-        SignalEngine.SignalResult result = engine.analyze(
-                testPrice,
-                testFastAverage,
-                testSlowAverage,
-                testRsi
-        );
-
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(background);
 
@@ -92,15 +75,9 @@ public class MainActivity extends Activity {
         root.addView(status);
 
         TextView market = cardText(
-                "FOREX MARKET\nScanning market conditions",
+                "FOREX MARKET\nConnecting to live market data...",
                 16,
                 white
-        );
-        market.setPadding(
-                dp(18),
-                dp(18),
-                dp(18),
-                dp(18)
         );
         market.setBackgroundColor(card);
 
@@ -120,18 +97,10 @@ public class MainActivity extends Activity {
 
         root.addView(timeframe);
 
-        int signalColor = yellow;
-
-        if (result.signal.equals("BUY")) {
-            signalColor = green;
-        } else if (result.signal.equals("SELL")) {
-            signalColor = red;
-        }
-
         TextView signal = cardText(
-                result.signal,
+                "LOADING...",
                 26,
-                signalColor
+                yellow
         );
 
         signal.setTypeface(
@@ -150,36 +119,12 @@ public class MainActivity extends Activity {
 
         root.addView(signal);
 
-        String detailsText;
-
-        if (result.signal.equals("WAIT")) {
-
-            detailsText =
-                    "Market conditions are not strong enough.\n\n" +
-                    "Confidence: " + result.confidence + "%";
-
-        } else {
-
-            detailsText =
-                    "Entry: " + result.entry + "\n\n" +
-                    "Stop Loss: " + result.stopLoss + "\n\n" +
-                    "Take Profit 1: " + result.takeProfit1 + "\n\n" +
-                    "Take Profit 2: " + result.takeProfit2 + "\n\n" +
-                    "Confidence: " + result.confidence + "%";
-        }
-
         TextView details = cardText(
-                detailsText,
+                "Waiting for real market candles...",
                 16,
                 white
         );
 
-        details.setPadding(
-                dp(18),
-                dp(20),
-                dp(18),
-                dp(20)
-        );
         details.setBackgroundColor(card);
 
         root.addView(details);
@@ -217,5 +162,239 @@ public class MainActivity extends Activity {
 
         scroll.addView(root);
         setContentView(scroll);
+
+        FinnhubClient client = new FinnhubClient();
+
+        client.getForexCandles(new FinnhubClient.Callback() {
+
+            @Override
+            public void onSuccess(String data) {
+
+                try {
+                    JSONObject json = new JSONObject(data);
+
+                    if (!"ok".equalsIgnoreCase(
+                            json.optString("s")
+                    )) {
+                        throw new Exception(
+                                "Finnhub returned: "
+                                        + json.optString("s")
+                        );
+                    }
+
+                    JSONArray closes = json.getJSONArray("c");
+
+                    if (closes.length() < 21) {
+                        throw new Exception(
+                                "Not enough market candles"
+                        );
+                    }
+
+                    double[] prices = new double[closes.length()];
+
+                    for (int i = 0; i < closes.length(); i++) {
+                        prices[i] = closes.getDouble(i);
+                    }
+
+                    double price =
+                            prices[prices.length - 1];
+
+                    double fastAverage =
+                            calculateSma(prices, 9);
+
+                    double slowAverage =
+                            calculateSma(prices, 21);
+
+                    double rsi =
+                            calculateRsi(prices, 14);
+
+                    SignalEngine engine =
+                            new SignalEngine();
+
+                    SignalEngine.SignalResult result =
+                            engine.analyze(
+                                    price,
+                                    fastAverage,
+                                    slowAverage,
+                                    rsi
+                            );
+
+                    runOnUiThread(() -> {
+
+                        int signalColor = yellow;
+
+                        if (result.signal.equals("BUY")) {
+                            signalColor = green;
+                        } else if (result.signal.equals("SELL")) {
+                            signalColor = red;
+                        }
+
+                        signal.setText(result.signal);
+                        signal.setTextColor(signalColor);
+
+                        String detailsText;
+
+                        if (result.signal.equals("WAIT")) {
+
+                            detailsText =
+                                    "Current Price: "
+                                            + formatPrice(result.entry)
+                                            + "\n\n"
+                                            + "RSI: "
+                                            + formatNumber(rsi)
+                                            + "\n\n"
+                                            + "Confidence: "
+                                            + result.confidence
+                                            + "%";
+
+                        } else {
+
+                            detailsText =
+                                    "Entry: "
+                                            + formatPrice(result.entry)
+                                            + "\n\n"
+                                            + "Stop Loss: "
+                                            + formatPrice(result.stopLoss)
+                                            + "\n\n"
+                                            + "Take Profit 1: "
+                                            + formatPrice(result.takeProfit1)
+                                            + "\n\n"
+                                            + "Take Profit 2: "
+                                            + formatPrice(result.takeProfit2)
+                                            + "\n\n"
+                                            + "RSI: "
+                                            + formatNumber(rsi)
+                                            + "\n\n"
+                                            + "Confidence: "
+                                            + result.confidence
+                                            + "%";
+                        }
+
+                        details.setText(detailsText);
+
+                        market.setText(
+                                "FOREX MARKET\n" +
+                                "Live EUR/USD data received"
+                        );
+                    });
+
+                } catch (Exception e) {
+
+                    runOnUiThread(() -> {
+
+                        signal.setText("DATA ERROR");
+                        signal.setTextColor(red);
+
+                        details.setText(
+                                "Unable to analyze live market data.\n\n"
+                                        + e.getMessage()
+                        );
+
+                        market.setText(
+                                "FOREX MARKET\n" +
+                                "Live data connection failed"
+                        );
+                    });
+                }
+            }
+
+            @Override
+            public void onError(String error) {
+
+                runOnUiThread(() -> {
+
+                    signal.setText("DATA ERROR");
+                    signal.setTextColor(red);
+
+                    details.setText(
+                            "Finnhub connection failed.\n\n"
+                                    + error
+                    );
+
+                    market.setText(
+                            "FOREX MARKET\n" +
+                            "Live data connection failed"
+                    );
+                });
+            }
+        });
+    }
+
+    private double calculateSma(
+            double[] prices,
+            int period
+    ) {
+
+        if (prices.length < period) {
+            return prices[prices.length - 1];
+        }
+
+        double sum = 0;
+
+        for (
+                int i = prices.length - period;
+                i < prices.length;
+                i++
+        ) {
+            sum += prices[i];
+        }
+
+        return sum / period;
+    }
+
+    private double calculateRsi(
+            double[] prices,
+            int period
+    ) {
+
+        if (prices.length <= period) {
+            return 50.0;
+        }
+
+        double gains = 0;
+        double losses = 0;
+
+        int start = prices.length - period;
+
+        for (int i = start; i < prices.length; i++) {
+
+            double change =
+                    prices[i] - prices[i - 1];
+
+            if (change > 0) {
+                gains += change;
+            } else {
+                losses += Math.abs(change);
+            }
+        }
+
+        double averageGain = gains / period;
+        double averageLoss = losses / period;
+
+        if (averageLoss == 0) {
+            return 100.0;
+        }
+
+        double relativeStrength =
+                averageGain / averageLoss;
+
+        return 100.0 -
+                (100.0 / (1.0 + relativeStrength));
+    }
+
+    private String formatPrice(double value) {
+        return String.format(
+                java.util.Locale.US,
+                "%.5f",
+                value
+        );
+    }
+
+    private String formatNumber(double value) {
+        return String.format(
+                java.util.Locale.US,
+                "%.1f",
+                value
+        );
     }
 }
