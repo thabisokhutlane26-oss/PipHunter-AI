@@ -65,18 +65,21 @@ public class FinnhubClient {
                     callback.onSuccess(result.toString());
                 } else {
                     callback.onError(
-                            "HTTP " + responseCode + ": " + result
+                            "HTTP " + responseCode +
+                            "\n" + result
                     );
                 }
 
             } catch (Exception e) {
+
                 callback.onError(
-                        e.getClass().getSimpleName()
-                                + ": "
-                                + e.getMessage()
+                        e.getClass().getSimpleName() +
+                        "\n" +
+                        e.getMessage()
                 );
 
             } finally {
+
                 if (connection != null) {
                     connection.disconnect();
                 }
