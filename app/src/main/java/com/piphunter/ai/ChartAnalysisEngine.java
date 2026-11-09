@@ -1,9 +1,13 @@
+
 package com.piphunter.ai;
 
 import android.graphics.Bitmap;
 import android.graphics.Color;
 
 public class ChartAnalysisEngine {
+
+    private final CandlePatternAnalyzer candleAnalyzer =
+            new CandlePatternAnalyzer();
 
     public ChartResult analyze(Bitmap bitmap) {
 
@@ -22,6 +26,10 @@ public class ChartAnalysisEngine {
             );
         }
 
+        // Run preliminary candle candidate analysis.
+        CandlePatternAnalyzer.CandleStats candleStats =
+                candleAnalyzer.analyze(bitmap);
+
         long greenPixels = 0;
         long redPixels = 0;
 
@@ -35,7 +43,6 @@ public class ChartAnalysisEngine {
         int endY = height - (height / 7);
 
         // Inspect the main chart area.
-        // Sample every second pixel to reduce processing time.
 
         for (int y = startY; y < endY; y += 2) {
 
@@ -70,10 +77,17 @@ public class ChartAnalysisEngine {
         }
 
         if (greenPixels + redPixels < 40) {
-            return ChartResult.waitForMoreData(
-                    "Screenshot loaded, but clear green or red chart pixels "
-                    + "could not be detected. Try a clearer chart screenshot."
-            );
+
+            String explanation =
+                    "PRELIMINARY IMAGE ANALYSIS\n\n"
+                    + "Image dimensions: "
+                    + width + " × " + height + " pixels\n\n"
+                    + "Clear green or red chart pixels "
+                    + "could not be detected.\n\n"
+                    + candleStats.explanation
+                    + "\n\nNo trading direction can be confirmed.";
+
+            return ChartResult.waitForMoreData(explanation);
         }
 
         int greenColumnsFound = 0;
@@ -109,11 +123,13 @@ public class ChartAnalysisEngine {
                 + greenColumnsFound + "\n"
                 + "Red-active image columns: "
                 + redColumnsFound + "\n\n"
-                + "The image contains visible green and red areas. "
-                + "These measurements are pixel observations, "
-                + "not confirmed candle counts or market direction. "
-                + "Candle recognition, price extraction and "
-                + "trend verification are still required.";
+                + "CANDLE CANDIDATE ANALYSIS\n\n"
+                + candleStats.explanation
+                + "\n\n"
+                + "IMPORTANT\n"
+                + "These are preliminary pixel measurements. "
+                + "They do not confirm real candle patterns, "
+                + "market direction, entry prices or trading signals.";
 
         return ChartResult.waitForMoreData(explanation);
     }
