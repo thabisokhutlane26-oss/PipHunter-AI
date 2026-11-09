@@ -1,17 +1,23 @@
+
 package com.piphunter.ai;
 
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.animation.LinearInterpolator;
+import android.animation.ValueAnimator;
 import android.view.View;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -28,13 +34,17 @@ public class MainActivity extends Activity {
     private static final int REQUEST_CHART_IMAGE = 101;
     private static final int PREVIEW_MAX_SIZE = 900;
 
-    private final int bgColor = Color.rgb(7, 16, 27);
-    private final int cardColor = Color.rgb(17, 34, 49);
-    private final int green = Color.rgb(48, 220, 145);
+    private final int bgColor = Color.rgb(6, 12, 29);
+    private final int cardColor = Color.rgb(18, 27, 52);
+    private final int green = Color.rgb(48, 235, 160);
+    private final int cyan = Color.rgb(55, 205, 255);
+    private final int purple = Color.rgb(160, 115, 255);
+    private final int gold = Color.rgb(255, 194, 92);
     private final int white = Color.WHITE;
-    private final int muted = Color.rgb(151, 171, 188);
+    private final int muted = Color.rgb(166, 181, 207);
 
     private ImageView chartPreview;
+    private ScanBeamView scanBeamView;
     private TextView imageStatus;
     private TextView scanStatus;
 
@@ -52,6 +62,7 @@ public class MainActivity extends Activity {
     private ChartAnalysisEngine analysisEngine;
 
     private ExecutorService imageExecutor;
+
     private final AtomicInteger previewRequestId =
             new AtomicInteger(0);
 
@@ -108,7 +119,7 @@ public class MainActivity extends Activity {
         card.setPadding(dp(16), dp(16), dp(16), dp(16));
 
         card.setBackground(roundedBackground(
-                cardColor, Color.rgb(37, 62, 79)));
+                cardColor, Color.rgb(66, 83, 135)));
 
         LinearLayout.LayoutParams params =
                 new LinearLayout.LayoutParams(-1, -2);
@@ -146,11 +157,10 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         analysisEngine = new ChartAnalysisEngine();
-
         imageExecutor = Executors.newSingleThreadExecutor();
 
         getWindow().setStatusBarColor(bgColor);
-        getWindow().setNavigationBarColor(bgColor);
+        getWindow().setNavigationBarColor(Color.rgb(9, 16, 36));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -159,6 +169,14 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(22), dp(18), dp(28));
+
+        root.setBackground(new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{
+                        Color.rgb(9, 17, 42),
+                        Color.rgb(7, 25, 39),
+                        Color.rgb(20, 12, 42)
+                }));
 
         // HEADER
 
@@ -172,11 +190,11 @@ public class MainActivity extends Activity {
         heading.setLayoutParams(
                 new LinearLayout.LayoutParams(0, -2, 1));
 
-        addLabel(heading, "PipHunter AI", 27, white, true);
+        addLabel(heading, "PipHunter AI", 27, cyan, true);
 
         TextView subtitle = makeText(
                 "SMART FOREX SCREENSHOT SCANNER",
-                10, muted, true);
+                10, purple, true);
 
         subtitle.setPadding(0, dp(4), 0, 0);
         heading.addView(subtitle);
@@ -188,8 +206,8 @@ public class MainActivity extends Activity {
         ready.setPadding(dp(10), dp(8), dp(10), dp(8));
 
         ready.setBackground(roundedBackground(
-                Color.rgb(17, 55, 47),
-                Color.rgb(35, 115, 88)));
+                Color.rgb(15, 65, 57),
+                Color.rgb(48, 190, 145)));
 
         header.addView(ready);
         root.addView(header);
@@ -199,6 +217,7 @@ public class MainActivity extends Activity {
                 14, muted, false);
 
         intro.setPadding(0, dp(15), 0, dp(20));
+        intro.setTextColor(Color.rgb(193, 205, 225));
         root.addView(intro);
 
         // UPLOAD CARD
@@ -207,7 +226,7 @@ public class MainActivity extends Activity {
 
         addLabel(uploadCard,
                 "01  UPLOAD YOUR CHART",
-                14, white, true);
+                14, cyan, true);
 
         TextView uploadHelp = makeText(
                 "Choose a screenshot from MT4, MT5, TradingView or your gallery.",
@@ -230,7 +249,7 @@ public class MainActivity extends Activity {
 
         addLabel(previewCard,
                 "02  CHART PREVIEW",
-                14, white, true);
+                14, purple, true);
 
         chartPreview = new ImageView(this);
         chartPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -243,12 +262,27 @@ public class MainActivity extends Activity {
         chartPreview.setImageResource(
                 android.R.drawable.ic_menu_gallery);
 
+        FrameLayout previewFrame = new FrameLayout(this);
+
+        previewFrame.setBackground(roundedBackground(
+                Color.rgb(5, 15, 31),
+                Color.rgb(55, 205, 255)));
+
         LinearLayout.LayoutParams imageParams =
                 new LinearLayout.LayoutParams(-1, dp(190));
 
         imageParams.topMargin = dp(12);
 
-        previewCard.addView(chartPreview, imageParams);
+        previewFrame.addView(chartPreview,
+                new FrameLayout.LayoutParams(-1, -1));
+
+        scanBeamView = new ScanBeamView();
+        scanBeamView.setVisibility(View.GONE);
+
+        previewFrame.addView(scanBeamView,
+                new FrameLayout.LayoutParams(-1, -1));
+
+        previewCard.addView(previewFrame, imageParams);
 
         imageStatus = makeText(
                 "No screenshot selected yet",
@@ -266,7 +300,7 @@ public class MainActivity extends Activity {
 
         addLabel(scanCard,
                 "03  AI CHART SCAN",
-                14, white, true);
+                14, green, true);
 
         TextView scanHelp = makeText(
                 "Select a chart screenshot and start image validation.",
@@ -298,11 +332,11 @@ public class MainActivity extends Activity {
 
         addLabel(resultCard,
                 "04  SCAN RESULT",
-                14, white, true);
+                14, gold, true);
 
         decisionText = makeText(
                 "WAIT",
-                24, green, true);
+                24, gold, true);
 
         decisionText.setGravity(Gravity.CENTER);
         decisionText.setPadding(0, dp(20), 0, dp(8));
@@ -407,6 +441,7 @@ public class MainActivity extends Activity {
                 previewRequestId.incrementAndGet();
 
         imageStatus.setText("Loading chart preview...");
+
         chartPreview.setImageResource(
                 android.R.drawable.ic_menu_gallery);
 
@@ -533,11 +568,13 @@ public class MainActivity extends Activity {
         scanButton.setText("ANALYZING IMAGE...");
         scanButton.setAlpha(0.65f);
 
+        scanBeamView.startScanning();
+
         scanStatus.setText(
-                "Loading screenshot and checking image quality...");
+                "SCANNING  •  Checking screenshot quality...");
 
         decisionText.setText("WAIT");
-        decisionText.setTextColor(green);
+        decisionText.setTextColor(gold);
 
         explanationText.setText(
                 "Analysis is running. Please wait.");
@@ -582,6 +619,7 @@ public class MainActivity extends Activity {
                     return;
                 }
 
+                scanBeamView.stopScanning();
                 showAnalysisResult(finalResult);
 
                 scanButton.setEnabled(true);
@@ -674,12 +712,11 @@ public class MainActivity extends Activity {
                     Color.rgb(255, 105, 105));
 
         } else {
-            decisionText.setTextColor(
-                    Color.rgb(255, 190, 80));
+            decisionText.setTextColor(gold);
         }
 
         scanStatus.setText(
-                "Image analysis stage completed.");
+                "SCAN COMPLETE  •  Screenshot checks finished.");
     }
 
     // IMAGE PICKER RESULT
@@ -732,7 +769,7 @@ public class MainActivity extends Activity {
                 scanButton.setAlpha(1.0f);
 
                 decisionText.setText("WAIT");
-                decisionText.setTextColor(green);
+                decisionText.setTextColor(gold);
 
                 explanationText.setText(
                         "Waiting for image analysis.");
@@ -771,10 +808,118 @@ public class MainActivity extends Activity {
         }
     }
 
+    // MOVING SCAN BEAM OVER THE CHART
+
+    private class ScanBeamView extends View {
+
+        private final Paint glowPaint =
+                new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        private final Paint linePaint =
+                new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        private ValueAnimator animator;
+        private float scanY = 0f;
+
+        ScanBeamView() {
+            super(MainActivity.this);
+            setWillNotDraw(false);
+        }
+
+        void startScanning() {
+
+            stopAnimatorOnly();
+            setVisibility(View.VISIBLE);
+
+            animator = ValueAnimator.ofFloat(0f, 1f);
+            animator.setDuration(1250);
+            animator.setRepeatCount(ValueAnimator.INFINITE);
+            animator.setRepeatMode(ValueAnimator.REVERSE);
+            animator.setInterpolator(new LinearInterpolator());
+
+            animator.addUpdateListener(a -> {
+                scanY = (float) a.getAnimatedValue();
+                invalidate();
+            });
+
+            animator.start();
+        }
+
+        private void stopAnimatorOnly() {
+
+            if (animator != null) {
+                animator.cancel();
+                animator = null;
+            }
+        }
+
+        void stopScanning() {
+
+            stopAnimatorOnly();
+            scanY = 0f;
+            setVisibility(View.GONE);
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+
+            super.onDraw(canvas);
+
+            if (getVisibility() != View.VISIBLE
+                    || getHeight() <= 0) {
+                return;
+            }
+
+            float y = scanY * getHeight();
+            float band = dp(24);
+
+            glowPaint.setColor(
+                    Color.argb(54, 40, 255, 177));
+
+            canvas.drawRect(
+                    0,
+                    Math.max(0, y - band),
+                    getWidth(),
+                    Math.min(getHeight(), y + band),
+                    glowPaint
+            );
+
+            linePaint.setColor(
+                    Color.rgb(64, 255, 190));
+
+            linePaint.setStrokeWidth(dp(2));
+
+            canvas.drawLine(
+                    0, y,
+                    getWidth(), y,
+                    linePaint
+            );
+
+            linePaint.setColor(
+                    Color.argb(110, 55, 205, 255));
+
+            linePaint.setStrokeWidth(dp(1));
+
+            canvas.drawLine(
+                    0,
+                    Math.min(getHeight(), y + dp(3)),
+                    getWidth(),
+                    Math.min(getHeight(), y + dp(3)),
+                    linePaint
+            );
+        }
+    }
+
     @Override
     protected void onDestroy() {
+
         activityDestroyed = true;
         previewRequestId.incrementAndGet();
+
+        if (scanBeamView != null) {
+            scanBeamView.stopScanning();
+        }
 
         if (imageExecutor != null) {
             imageExecutor.shutdownNow();
