@@ -1,4 +1,3 @@
-
 package com.piphunter.ai;
 
 import android.graphics.Bitmap;
@@ -26,6 +25,96 @@ public class ChartAnalysisEngine {
             );
         }
 
+        int startX = width / 12;
+        int endX = width - width / 12;
+        int startY = height / 6;
+        int endY = height - height / 7;
+
+        // Check visual detail in the main chart area.
+        long luminanceSum = 0;
+        long luminanceSquareSum = 0;
+        long sampleCount = 0;
+        long colouredSamples = 0;
+
+        for (int y = startY; y < endY; y += 4) {
+
+            for (int x = startX; x < endX; x += 4) {
+
+                int pixel = bitmap.getPixel(x, y);
+
+                int r = Color.red(pixel);
+                int g = Color.green(pixel);
+                int b = Color.blue(pixel);
+
+                int luminance =
+                        (int) (0.299 * r + 0.587 * g + 0.114 * b);
+
+                luminanceSum += luminance;
+                luminanceSquareSum +=
+                        (long) luminance * luminance;
+
+                sampleCount++;
+
+                boolean green =
+                        g > 90 &&
+                        g > r * 1.18 &&
+                        g > b * 0.90;
+
+                boolean red =
+                        r > 90 &&
+                        r > g * 1.25 &&
+                        r > b * 1.15;
+
+                if (green || red) {
+                    colouredSamples++;
+                }
+            }
+        }
+
+        if (sampleCount == 0) {
+            return ChartResult.waitForMoreData(
+                    "The chart area could not be inspected."
+            );
+        }
+
+        double averageBrightness =
+                luminanceSum / (double) sampleCount;
+
+        double brightnessVariance =
+                luminanceSquareSum / (double) sampleCount
+                - averageBrightness * averageBrightness;
+
+        if (brightnessVariance < 0) {
+            brightnessVariance = 0;
+        }
+
+        double colourRatio =
+                colouredSamples / (double) sampleCount;
+
+        String qualityDetails =
+                "SCREENSHOT QUALITY CHECK\n\n"
+                + "Image size: " + width + " × " + height + "\n"
+                + "Average brightness: "
+                + String.format("%.1f", averageBrightness) + "/255\n"
+                + "Visual detail score: "
+                + String.format("%.1f", brightnessVariance) + "\n"
+                + "Red/green colour samples: "
+                + String.format("%.2f", colourRatio * 100) + "%\n";
+
+        // Reject images that are almost completely uniform
+        // and contain practically no visible chart colours.
+        if (brightnessVariance < 18 && colourRatio < 0.005) {
+
+            return ChartResult.waitForMoreData(
+                    qualityDetails
+                    + "\nQUALITY RESULT: INSUFFICIENT VISUAL DETAIL\n\n"
+                    + "The selected image appears nearly blank "
+                    + "or has too little visible chart information.\n\n"
+                    + "Please upload a clearer screenshot showing "
+                    + "the chart candles and chart area."
+            );
+        }
+
         // Run preliminary candle candidate analysis.
         CandlePatternAnalyzer.CandleStats candleStats =
                 candleAnalyzer.analyze(bitmap);
@@ -35,14 +124,6 @@ public class ChartAnalysisEngine {
 
         boolean[] greenColumns = new boolean[width];
         boolean[] redColumns = new boolean[width];
-
-        int startX = width / 12;
-        int endX = width - (width / 12);
-
-        int startY = height / 6;
-        int endY = height - (height / 7);
-
-        // Inspect the main chart area.
 
         for (int y = startY; y < endY; y += 2) {
 
@@ -79,11 +160,10 @@ public class ChartAnalysisEngine {
         if (greenPixels + redPixels < 40) {
 
             String explanation =
-                    "PRELIMINARY IMAGE ANALYSIS\n\n"
-                    + "Image dimensions: "
-                    + width + " × " + height + " pixels\n\n"
+                    qualityDetails
+                    + "\nQUALITY RESULT: LIMITED CHART COLOURS\n\n"
                     + "Clear green or red chart pixels "
-                    + "could not be detected.\n\n"
+                    + "could not be detected reliably.\n\n"
                     + candleStats.explanation
                     + "\n\nNo trading direction can be confirmed.";
 
@@ -112,9 +192,9 @@ public class ChartAnalysisEngine {
         int redPercent = 100 - greenPercent;
 
         String explanation =
-                "PRELIMINARY IMAGE ANALYSIS\n\n"
-                + "Image dimensions: "
-                + width + " × " + height + " pixels\n\n"
+                qualityDetails
+                + "\nQUALITY RESULT: BASIC VISUAL DETAIL DETECTED\n\n"
+                + "PRELIMINARY IMAGE ANALYSIS\n\n"
                 + "Green pixel share: "
                 + greenPercent + "%\n"
                 + "Red pixel share: "
@@ -125,8 +205,7 @@ public class ChartAnalysisEngine {
                 + redColumnsFound + "\n\n"
                 + "CANDLE CANDIDATE ANALYSIS\n\n"
                 + candleStats.explanation
-                + "\n\n"
-                + "IMPORTANT\n"
+                + "\n\nIMPORTANT\n"
                 + "These are preliminary pixel measurements. "
                 + "They do not confirm real candle patterns, "
                 + "market direction, entry prices or trading signals.";
