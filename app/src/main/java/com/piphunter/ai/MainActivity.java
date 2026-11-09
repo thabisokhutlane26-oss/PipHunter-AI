@@ -3,6 +3,8 @@ package com.piphunter.ai;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -17,6 +19,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.InputStream;
+
 public class MainActivity extends Activity {
 
     private static final int REQUEST_CHART_IMAGE = 101;
@@ -30,8 +34,19 @@ public class MainActivity extends Activity {
     private ImageView chartPreview;
     private TextView imageStatus;
     private TextView scanStatus;
+
+    private TextView decisionText;
+    private TextView explanationText;
+    private TextView entryText;
+    private TextView stopLossText;
+    private TextView tp1Text;
+    private TextView tp2Text;
+    private TextView confidenceText;
+
     private Button scanButton;
+
     private Uri selectedImageUri;
+    private ChartAnalysisEngine analysisEngine;
 
     private int dp(float value) {
         return (int) (value * getResources()
@@ -87,8 +102,7 @@ public class MainActivity extends Activity {
                 cardColor, Color.rgb(37, 62, 79)));
 
         LinearLayout.LayoutParams params =
-                new LinearLayout.LayoutParams(
-                        -1, -2);
+                new LinearLayout.LayoutParams(-1, -2);
 
         params.bottomMargin = dp(14);
         card.setLayoutParams(params);
@@ -122,6 +136,8 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        analysisEngine = new ChartAnalysisEngine();
+
         getWindow().setStatusBarColor(bgColor);
         getWindow().setNavigationBarColor(bgColor);
 
@@ -133,12 +149,15 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(22), dp(18), dp(28));
 
+        // HEADER
+
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.VERTICAL);
+
         heading.setLayoutParams(
                 new LinearLayout.LayoutParams(0, -2, 1));
 
@@ -152,8 +171,11 @@ public class MainActivity extends Activity {
         heading.addView(subtitle);
         header.addView(heading);
 
-        TextView ready = makeText("● READY", 11, green, true);
+        TextView ready = makeText(
+                "● READY", 11, green, true);
+
         ready.setPadding(dp(10), dp(8), dp(10), dp(8));
+
         ready.setBackground(roundedBackground(
                 Color.rgb(17, 55, 47),
                 Color.rgb(35, 115, 88)));
@@ -177,7 +199,7 @@ public class MainActivity extends Activity {
                 14, white, true);
 
         TextView uploadHelp = makeText(
-                "Choose a screenshot from MT4, MT5, TradingView or your phone gallery.",
+                "Choose a screenshot from MT4, MT5, TradingView or your gallery.",
                 12, muted, false);
 
         uploadHelp.setPadding(0, dp(7), 0, dp(14));
@@ -191,7 +213,7 @@ public class MainActivity extends Activity {
 
         root.addView(uploadCard);
 
-        // IMAGE PREVIEW CARD
+        // PREVIEW CARD
 
         LinearLayout previewCard = makeCard();
 
@@ -202,9 +224,6 @@ public class MainActivity extends Activity {
         chartPreview = new ImageView(this);
         chartPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         chartPreview.setAdjustViewBounds(true);
-        chartPreview.setMinimumHeight(dp(170));
-        chartPreview.setMaxHeight(dp(320));
-
         chartPreview.setBackground(roundedBackground(
                 Color.rgb(8, 20, 31),
                 Color.rgb(43, 68, 84)));
@@ -238,7 +257,7 @@ public class MainActivity extends Activity {
                 14, white, true);
 
         TextView scanHelp = makeText(
-                "The image-analysis engine will inspect your uploaded chart.",
+                "Select a chart screenshot and start image validation.",
                 12, muted, false);
 
         scanHelp.setPadding(0, dp(7), 0, dp(14));
@@ -250,35 +269,14 @@ public class MainActivity extends Activity {
 
         scanCard.addView(scanButton);
 
-        scanButton.setOnClickListener(v -> {
-
-            if (selectedImageUri == null) {
-                Toast.makeText(
-                        this,
-                        "Choose a chart screenshot first.",
-                        Toast.LENGTH_SHORT
-                ).show();
-                return;
-            }
-
-            scanStatus.setText(
-                    "Screenshot loaded successfully. " +
-                    "The AI image-analysis engine is the next development step."
-            );
-
-            Toast.makeText(
-                    this,
-                    "Chart ready for AI analysis integration.",
-                    Toast.LENGTH_LONG
-            ).show();
-        });
-
         scanStatus = makeText(
                 "Waiting for a chart screenshot.",
                 12, muted, false);
 
         scanStatus.setPadding(0, dp(12), 0, 0);
         scanCard.addView(scanStatus);
+
+        scanButton.setOnClickListener(v -> startChartScan());
 
         root.addView(scanCard);
 
@@ -290,22 +288,21 @@ public class MainActivity extends Activity {
                 "04  SCAN RESULT",
                 14, white, true);
 
-        TextView decision = makeText(
-                "BUY  /  SELL  /  WAIT",
-                22, green, true);
+        decisionText = makeText(
+                "WAIT",
+                24, green, true);
 
-        decision.setGravity(Gravity.CENTER);
-        decision.setPadding(0, dp(22), 0, dp(8));
+        decisionText.setGravity(Gravity.CENTER);
+        decisionText.setPadding(0, dp(20), 0, dp(8));
 
-        resultCard.addView(decision);
+        resultCard.addView(decisionText);
 
-        TextView resultHelp = makeText(
-                "Your decision will appear here after real AI image analysis. " +
-                "No result is generated from an unscanned image.",
+        explanationText = makeText(
+                "No chart has been analyzed yet.",
                 12, muted, false);
 
-        resultHelp.setGravity(Gravity.CENTER);
-        resultCard.addView(resultHelp);
+        explanationText.setGravity(Gravity.CENTER);
+        resultCard.addView(explanationText);
 
         View line = new View(this);
         line.setBackgroundColor(Color.rgb(48, 70, 86));
@@ -318,11 +315,11 @@ public class MainActivity extends Activity {
 
         resultCard.addView(line, lineParams);
 
-        addResultRow(resultCard, "Entry", "—");
-        addResultRow(resultCard, "Stop Loss", "—");
-        addResultRow(resultCard, "Take Profit 1", "—");
-        addResultRow(resultCard, "Take Profit 2", "—");
-        addResultRow(resultCard, "Confidence", "—");
+        entryText = addResultRow(resultCard, "Entry", "—");
+        stopLossText = addResultRow(resultCard, "Stop Loss", "—");
+        tp1Text = addResultRow(resultCard, "Take Profit 1", "—");
+        tp2Text = addResultRow(resultCard, "Take Profit 2", "—");
+        confidenceText = addResultRow(resultCard, "Confidence", "—");
 
         root.addView(resultCard);
 
@@ -352,7 +349,7 @@ public class MainActivity extends Activity {
         setContentView(scroll);
     }
 
-    private void addResultRow(
+    private TextView addResultRow(
             LinearLayout parent,
             String label,
             String value) {
@@ -363,6 +360,7 @@ public class MainActivity extends Activity {
         row.setPadding(0, dp(5), 0, dp(5));
 
         TextView left = makeText(label, 13, muted, false);
+
         left.setLayoutParams(
                 new LinearLayout.LayoutParams(0, -2, 1));
 
@@ -370,9 +368,12 @@ public class MainActivity extends Activity {
 
         row.addView(left);
         row.addView(right);
-
         parent.addView(row);
+
+        return right;
     }
+
+    // OPEN IMAGE PICKER
 
     private void openImagePicker() {
 
@@ -383,6 +384,172 @@ public class MainActivity extends Activity {
         startActivityForResult(
                 intent, REQUEST_CHART_IMAGE);
     }
+
+    // START IMAGE ANALYSIS
+
+    private void startChartScan() {
+
+        if (selectedImageUri == null) {
+            Toast.makeText(
+                    this,
+                    "Choose a chart screenshot first.",
+                    Toast.LENGTH_SHORT
+            ).show();
+            return;
+        }
+
+        scanButton.setEnabled(false);
+        scanButton.setText("ANALYZING IMAGE...");
+        scanButton.setAlpha(0.65f);
+
+        scanStatus.setText(
+                "Loading screenshot and checking image quality...");
+
+        decisionText.setText("WAIT");
+        decisionText.setTextColor(green);
+
+        explanationText.setText(
+                "Analysis is running. Please wait.");
+
+        entryText.setText("—");
+        stopLossText.setText("—");
+        tp1Text.setText("—");
+        tp2Text.setText("—");
+        confidenceText.setText("—");
+
+        final Uri imageUri = selectedImageUri;
+
+        new Thread(() -> {
+
+            Bitmap bitmap = null;
+            ChartResult result;
+
+            try {
+
+                bitmap = loadBitmap(imageUri);
+
+                result = analysisEngine.analyze(bitmap);
+
+            } catch (Exception e) {
+
+                result = ChartResult.waitForMoreData(
+                        "Could not read this screenshot. " +
+                        "Please choose another image."
+                );
+
+            } finally {
+
+                if (bitmap != null && !bitmap.isRecycled()) {
+                    bitmap.recycle();
+                }
+            }
+
+            final ChartResult finalResult = result;
+
+            runOnUiThread(() -> {
+
+                showAnalysisResult(finalResult);
+
+                scanButton.setEnabled(true);
+                scanButton.setAlpha(1.0f);
+                scanButton.setText("⌕  SCAN CHART");
+
+            });
+
+        }).start();
+    }
+
+    // LOAD AND DOWNSCALE IMAGE
+
+    private Bitmap loadBitmap(Uri uri) throws Exception {
+
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+
+        InputStream firstStream =
+                getContentResolver().openInputStream(uri);
+
+        if (firstStream == null) {
+            throw new Exception("Image stream unavailable");
+        }
+
+        try {
+            BitmapFactory.decodeStream(
+                    firstStream, null, bounds);
+        } finally {
+            firstStream.close();
+        }
+
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw new Exception("Invalid image dimensions");
+        }
+
+        BitmapFactory.Options options =
+                new BitmapFactory.Options();
+
+        options.inSampleSize = 1;
+
+        while ((bounds.outWidth / options.inSampleSize) > 1800
+                || (bounds.outHeight / options.inSampleSize) > 1800) {
+
+            options.inSampleSize *= 2;
+        }
+
+        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+
+        InputStream secondStream =
+                getContentResolver().openInputStream(uri);
+
+        if (secondStream == null) {
+            throw new Exception("Unable to reopen image");
+        }
+
+        try {
+            Bitmap bitmap = BitmapFactory.decodeStream(
+                    secondStream, null, options);
+
+            if (bitmap == null) {
+                throw new Exception("Image decoding failed");
+            }
+
+            return bitmap;
+
+        } finally {
+            secondStream.close();
+        }
+    }
+
+    // DISPLAY REAL ENGINE RESULT
+
+    private void showAnalysisResult(ChartResult result) {
+
+        decisionText.setText(result.signal);
+
+        explanationText.setText(result.explanation);
+
+        entryText.setText(result.entry);
+        stopLossText.setText(result.stopLoss);
+        tp1Text.setText(result.takeProfit1);
+        tp2Text.setText(result.takeProfit2);
+        confidenceText.setText(result.confidence);
+
+        if ("BUY".equals(result.signal)) {
+            decisionText.setTextColor(green);
+
+        } else if ("SELL".equals(result.signal)) {
+            decisionText.setTextColor(
+                    Color.rgb(255, 105, 105));
+
+        } else {
+            decisionText.setTextColor(
+                    Color.rgb(255, 190, 80));
+        }
+
+        scanStatus.setText(
+                "Image analysis stage completed.");
+    }
+
+    // IMAGE PICKER RESULT
 
     @Override
     protected void onActivityResult(
@@ -401,23 +568,34 @@ public class MainActivity extends Activity {
             selectedImageUri = data.getData();
 
             try {
+
                 chartPreview.setImageURI(selectedImageUri);
 
                 imageStatus.setText(
                         "Screenshot selected successfully");
 
                 scanStatus.setText(
-                        "Chart image loaded. Ready for AI engine integration.");
+                        "Chart loaded. Press SCAN CHART to analyze.");
 
                 scanButton.setEnabled(true);
                 scanButton.setAlpha(1.0f);
+
+                decisionText.setText("WAIT");
+                explanationText.setText(
+                        "Waiting for image analysis.");
+
+                entryText.setText("—");
+                stopLossText.setText("—");
+                tp1Text.setText("—");
+                tp2Text.setText("—");
+                confidenceText.setText("—");
 
             } catch (Exception e) {
 
                 selectedImageUri = null;
 
                 imageStatus.setText(
-                        "Could not open this image. Please choose another screenshot.");
+                        "Could not open this image. Choose another screenshot.");
 
                 scanButton.setEnabled(false);
                 scanButton.setAlpha(0.55f);
