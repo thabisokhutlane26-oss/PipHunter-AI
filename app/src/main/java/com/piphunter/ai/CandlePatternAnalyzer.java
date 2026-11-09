@@ -51,9 +51,16 @@ public class CandlePatternAnalyzer {
         int bullish = 0;
         int bearish = 0;
 
-        int lastDetectedX = -100;
+        int activeColor = 0;
+        int groupStartX = -1;
+        int groupEndX = -1;
 
-        for (int x = startX; x < endX; x += 2) {
+        int groupTop = height;
+        int groupBottom = -1;
+
+        int blankColumns = 0;
+
+        for (int x = startX; x < endX; x++) {
 
             int greenCount = 0;
             int redCount = 0;
@@ -95,27 +102,99 @@ public class CandlePatternAnalyzer {
                 }
             }
 
-            if (x - lastDetectedX < 5) {
+            int columnColor = 0;
+            int columnTop = height;
+            int columnBottom = -1;
+
+            if (greenCount >= 2 &&
+                    greenCount > redCount * 1.35) {
+
+                columnColor = 1;
+                columnTop = greenTop;
+                columnBottom = greenBottom;
+
+            } else if (redCount >= 2 &&
+                    redCount > greenCount * 1.35) {
+
+                columnColor = 2;
+                columnTop = redTop;
+                columnBottom = redBottom;
+            }
+
+            if (columnColor == 0) {
+
+                blankColumns++;
+
+                if (blankColumns > 2 && activeColor != 0) {
+
+                    if (groupEndX - groupStartX >= 1 &&
+                            groupBottom - groupTop >= 4) {
+
+                        if (activeColor == 1) {
+                            bullish++;
+                        } else {
+                            bearish++;
+                        }
+                    }
+
+                    activeColor = 0;
+                    groupStartX = -1;
+                    groupEndX = -1;
+                    groupTop = height;
+                    groupBottom = -1;
+                }
+
                 continue;
             }
 
-            if (greenCount >= 3 && greenCount > redCount * 1.5) {
+            blankColumns = 0;
 
-                int verticalSize = greenBottom - greenTop;
+            if (activeColor == 0) {
 
-                if (verticalSize >= 4) {
-                    bullish++;
-                    lastDetectedX = x;
+                activeColor = columnColor;
+                groupStartX = x;
+                groupEndX = x;
+                groupTop = columnTop;
+                groupBottom = columnBottom;
+
+            } else if (activeColor == columnColor) {
+
+                groupEndX = x;
+                groupTop = Math.min(groupTop, columnTop);
+                groupBottom = Math.max(
+                        groupBottom,
+                        columnBottom
+                );
+
+            } else {
+
+                if (groupEndX - groupStartX >= 1 &&
+                        groupBottom - groupTop >= 4) {
+
+                    if (activeColor == 1) {
+                        bullish++;
+                    } else {
+                        bearish++;
+                    }
                 }
 
-            } else if (redCount >= 3 && redCount > greenCount * 1.5) {
+                activeColor = columnColor;
+                groupStartX = x;
+                groupEndX = x;
+                groupTop = columnTop;
+                groupBottom = columnBottom;
+            }
+        }
 
-                int verticalSize = redBottom - redTop;
+        // Finish the final group.
+        if (activeColor != 0 &&
+                groupEndX - groupStartX >= 1 &&
+                groupBottom - groupTop >= 4) {
 
-                if (verticalSize >= 4) {
-                    bearish++;
-                    lastDetectedX = x;
-                }
+            if (activeColor == 1) {
+                bullish++;
+            } else {
+                bearish++;
             }
         }
 
@@ -124,17 +203,22 @@ public class CandlePatternAnalyzer {
         String explanation;
 
         if (total == 0) {
+
             explanation =
-                    "No clear candle candidates detected. "
+                    "No clear coloured candle candidates detected.\n\n"
                     + "Try a screenshot with larger, clearer candles.";
+
         } else {
+
             explanation =
-                    "Preliminary candle candidates detected.\n\n"
-                    + "Possible bullish columns: " + bullish + "\n"
-                    + "Possible bearish columns: " + bearish + "\n"
-                    + "Total candidates: " + total + "\n\n"
-                    + "These are pixel-based candidates, not verified "
-                    + "candles or confirmed market direction.";
+                    "PRELIMINARY CANDLE GROUPING\n\n"
+                    + "Possible bullish groups: " + bullish + "\n"
+                    + "Possible bearish groups: " + bearish + "\n"
+                    + "Total possible groups: " + total + "\n\n"
+                    + "Coloured pixel columns were grouped "
+                    + "into possible candle-like shapes.\n\n"
+                    + "These are not verified candlesticks "
+                    + "or confirmed market direction.";
         }
 
         return new CandleStats(
