@@ -19,10 +19,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.InputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends Activity {
 
     private static final int REQUEST_CHART_IMAGE = 101;
+    private static final int PREVIEW_MAX_SIZE = 900;
 
     private final int bgColor = Color.rgb(7, 16, 27);
     private final int cardColor = Color.rgb(17, 34, 49);
@@ -46,6 +50,12 @@ public class MainActivity extends Activity {
 
     private Uri selectedImageUri;
     private ChartAnalysisEngine analysisEngine;
+
+    private ExecutorService imageExecutor;
+    private final AtomicInteger previewRequestId =
+            new AtomicInteger(0);
+
+    private volatile boolean activityDestroyed = false;
 
     private int dp(float value) {
         return (int) (value * getResources()
@@ -137,6 +147,8 @@ public class MainActivity extends Activity {
 
         analysisEngine = new ChartAnalysisEngine();
 
+        imageExecutor = Executors.newSingleThreadExecutor();
+
         getWindow().setStatusBarColor(bgColor);
         getWindow().setNavigationBarColor(bgColor);
 
@@ -223,6 +235,7 @@ public class MainActivity extends Activity {
         chartPreview = new ImageView(this);
         chartPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         chartPreview.setAdjustViewBounds(true);
+
         chartPreview.setBackground(roundedBackground(
                 Color.rgb(8, 20, 31),
                 Color.rgb(43, 68, 84)));
@@ -386,6 +399,123 @@ public class MainActivity extends Activity {
                 intent, REQUEST_CHART_IMAGE);
     }
 
+    // LOAD SMALL PREVIEW IN BACKGROUND
+
+    private void loadPreview(Uri uri) {
+
+        final int requestId =
+                previewRequestId.incrementAndGet();
+
+        imageStatus.setText("Loading chart preview...");
+        chartPreview.setImageResource(
+                android.R.drawable.ic_menu_gallery);
+
+        imageExecutor.execute(() -> {
+
+            Bitmap preview = null;
+            String error = null;
+
+            try {
+                preview = decodeScaledBitmap(
+                        uri, PREVIEW_MAX_SIZE);
+
+                if (preview == null) {
+                    error = "Preview could not be created.";
+                }
+
+            } catch (Exception e) {
+                error = "Preview loading failed.";
+            }
+
+            final Bitmap finalPreview = preview;
+            final String finalError = error;
+
+            runOnUiThread(() -> {
+
+                if (activityDestroyed
+                        || requestId != previewRequestId.get()) {
+
+                    if (finalPreview != null
+                            && !finalPreview.isRecycled()) {
+                        finalPreview.recycle();
+                    }
+                    return;
+                }
+
+                if (finalPreview != null) {
+
+                    chartPreview.setImageBitmap(finalPreview);
+
+                    imageStatus.setText(
+                            "Screenshot preview loaded successfully.");
+
+                } else {
+
+                    imageStatus.setText(finalError);
+                }
+            });
+        });
+    }
+
+    // DECODE IMAGE AT A SMALLER SIZE
+
+    private Bitmap decodeScaledBitmap(
+            Uri uri, int maximumSize) throws Exception {
+
+        BitmapFactory.Options bounds =
+                new BitmapFactory.Options();
+
+        bounds.inJustDecodeBounds = true;
+
+        InputStream firstStream =
+                getContentResolver().openInputStream(uri);
+
+        if (firstStream == null) {
+            throw new Exception("Image unavailable");
+        }
+
+        try {
+            BitmapFactory.decodeStream(
+                    firstStream, null, bounds);
+        } finally {
+            firstStream.close();
+        }
+
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw new Exception("Invalid image dimensions");
+        }
+
+        int sampleSize = 1;
+
+        while ((bounds.outWidth / (sampleSize * 2))
+                >= maximumSize
+                && (bounds.outHeight / (sampleSize * 2))
+                >= maximumSize) {
+
+            sampleSize *= 2;
+        }
+
+        BitmapFactory.Options options =
+                new BitmapFactory.Options();
+
+        options.inSampleSize = sampleSize;
+        options.inPreferredConfig = Bitmap.Config.RGB_565;
+
+        InputStream secondStream =
+                getContentResolver().openInputStream(uri);
+
+        if (secondStream == null) {
+            throw new Exception("Unable to reopen image");
+        }
+
+        try {
+            return BitmapFactory.decodeStream(
+                    secondStream, null, options);
+        } finally {
+            secondStream.close();
+        }
+    }
+
     // START IMAGE ANALYSIS
 
     private void startChartScan() {
@@ -420,7 +550,7 @@ public class MainActivity extends Activity {
 
         final Uri imageUri = selectedImageUri;
 
-        new Thread(() -> {
+        imageExecutor.execute(() -> {
 
             Bitmap bitmap = null;
             ChartResult result;
@@ -448,22 +578,26 @@ public class MainActivity extends Activity {
 
             runOnUiThread(() -> {
 
+                if (activityDestroyed) {
+                    return;
+                }
+
                 showAnalysisResult(finalResult);
 
                 scanButton.setEnabled(true);
                 scanButton.setAlpha(1.0f);
                 scanButton.setText("⌕  SCAN CHART");
-
             });
-
-        }).start();
+        });
     }
 
-    // LOAD AND DOWNSCALE IMAGE
+    // LOAD SCAN IMAGE
 
     private Bitmap loadBitmap(Uri uri) throws Exception {
 
-        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        BitmapFactory.Options bounds =
+                new BitmapFactory.Options();
+
         bounds.inJustDecodeBounds = true;
 
         InputStream firstStream =
@@ -580,7 +714,6 @@ public class MainActivity extends Activity {
                             );
                 }
 
-                // Test that the selected image can be opened.
                 InputStream testStream =
                         getContentResolver().openInputStream(newImageUri);
 
@@ -592,13 +725,8 @@ public class MainActivity extends Activity {
 
                 selectedImageUri = newImageUri;
 
-                chartPreview.setImageURI(selectedImageUri);
-
-                imageStatus.setText(
-                        "Screenshot selected successfully");
-
                 scanStatus.setText(
-                        "Chart loaded. Press SCAN CHART to analyze.");
+                        "Chart selected. Loading preview...");
 
                 scanButton.setEnabled(true);
                 scanButton.setAlpha(1.0f);
@@ -615,9 +743,12 @@ public class MainActivity extends Activity {
                 tp2Text.setText("—");
                 confidenceText.setText("—");
 
+                loadPreview(newImageUri);
+
             } catch (Exception e) {
 
                 selectedImageUri = null;
+                previewRequestId.incrementAndGet();
 
                 chartPreview.setImageResource(
                         android.R.drawable.ic_menu_gallery);
@@ -638,5 +769,17 @@ public class MainActivity extends Activity {
                 ).show();
             }
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        activityDestroyed = true;
+        previewRequestId.incrementAndGet();
+
+        if (imageExecutor != null) {
+            imageExecutor.shutdownNow();
+        }
+
+        super.onDestroy();
     }
 }
