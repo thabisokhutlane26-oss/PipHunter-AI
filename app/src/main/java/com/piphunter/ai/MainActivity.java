@@ -1,7 +1,7 @@
-
 package com.piphunter.ai;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -12,11 +12,13 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.animation.LinearInterpolator;
 import android.animation.ValueAnimator;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -59,7 +61,6 @@ public class MainActivity extends Activity {
     private Button scanButton;
 
     private Uri selectedImageUri;
-    private ChartAnalysisEngine analysisEngine;
 
     private ExecutorService imageExecutor;
 
@@ -156,7 +157,6 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        analysisEngine = new ChartAnalysisEngine();
         imageExecutor = Executors.newSingleThreadExecutor();
 
         getWindow().setStatusBarColor(bgColor);
@@ -177,8 +177,6 @@ public class MainActivity extends Activity {
                         Color.rgb(7, 25, 39),
                         Color.rgb(20, 12, 42)
                 }));
-
-        // HEADER
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
@@ -303,13 +301,13 @@ public class MainActivity extends Activity {
                 14, green, true);
 
         TextView scanHelp = makeText(
-                "Select a chart screenshot and start image validation.",
+                "Gemini AI will analyse your uploaded chart screenshot.",
                 12, muted, false);
 
         scanHelp.setPadding(0, dp(7), 0, dp(14));
         scanCard.addView(scanHelp);
 
-        scanButton = makeButton("⌕  SCAN CHART", true);
+        scanButton = makeButton("⌕  SCAN WITH GEMINI AI", true);
         scanButton.setEnabled(false);
         scanButton.setAlpha(0.55f);
 
@@ -335,8 +333,7 @@ public class MainActivity extends Activity {
                 14, gold, true);
 
         decisionText = makeText(
-                "WAIT",
-                24, gold, true);
+                "WAIT", 24, gold, true);
 
         decisionText.setGravity(Gravity.CENTER);
         decisionText.setPadding(0, dp(20), 0, dp(8));
@@ -369,18 +366,13 @@ public class MainActivity extends Activity {
 
         root.addView(resultCard);
 
-        // FOOTER
-
-        LinearLayout footer = new LinearLayout(this);
-        footer.setGravity(Gravity.CENTER);
-        footer.setPadding(0, dp(8), 0, 0);
-
         TextView footerText = makeText(
                 "SCAN HISTORY     •     SETTINGS",
                 11, muted, true);
 
-        footer.addView(footerText);
-        root.addView(footer);
+        footerText.setGravity(Gravity.CENTER);
+        footerText.setPadding(0, dp(8), 0, 0);
+        root.addView(footerText);
 
         TextView disclaimer = makeText(
                 "For educational analysis only. Always manage trading risk.",
@@ -419,7 +411,7 @@ public class MainActivity extends Activity {
         return right;
     }
 
-    // OPEN IMAGE PICKER
+    // IMAGE PICKER
 
     private void openImagePicker() {
 
@@ -429,16 +421,14 @@ public class MainActivity extends Activity {
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
 
-        startActivityForResult(
-                intent, REQUEST_CHART_IMAGE);
+        startActivityForResult(intent, REQUEST_CHART_IMAGE);
     }
 
-    // LOAD SMALL PREVIEW IN BACKGROUND
+    // PREVIEW
 
     private void loadPreview(Uri uri) {
 
-        final int requestId =
-                previewRequestId.incrementAndGet();
+        final int requestId = previewRequestId.incrementAndGet();
 
         imageStatus.setText("Loading chart preview...");
 
@@ -451,8 +441,7 @@ public class MainActivity extends Activity {
             String error = null;
 
             try {
-                preview = decodeScaledBitmap(
-                        uri, PREVIEW_MAX_SIZE);
+                preview = decodeScaledBitmap(uri, PREVIEW_MAX_SIZE);
 
                 if (preview == null) {
                     error = "Preview could not be created.";
@@ -478,28 +467,20 @@ public class MainActivity extends Activity {
                 }
 
                 if (finalPreview != null) {
-
                     chartPreview.setImageBitmap(finalPreview);
-
                     imageStatus.setText(
                             "Screenshot preview loaded successfully.");
-
                 } else {
-
                     imageStatus.setText(finalError);
                 }
             });
         });
     }
 
-    // DECODE IMAGE AT A SMALLER SIZE
-
     private Bitmap decodeScaledBitmap(
             Uri uri, int maximumSize) throws Exception {
 
-        BitmapFactory.Options bounds =
-                new BitmapFactory.Options();
-
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
 
         InputStream firstStream =
@@ -510,8 +491,7 @@ public class MainActivity extends Activity {
         }
 
         try {
-            BitmapFactory.decodeStream(
-                    firstStream, null, bounds);
+            BitmapFactory.decodeStream(firstStream, null, bounds);
         } finally {
             firstStream.close();
         }
@@ -522,17 +502,12 @@ public class MainActivity extends Activity {
 
         int sampleSize = 1;
 
-        while ((bounds.outWidth / (sampleSize * 2))
-                >= maximumSize
-                && (bounds.outHeight / (sampleSize * 2))
-                >= maximumSize) {
-
+        while ((bounds.outWidth / (sampleSize * 2)) >= maximumSize
+                && (bounds.outHeight / (sampleSize * 2)) >= maximumSize) {
             sampleSize *= 2;
         }
 
-        BitmapFactory.Options options =
-                new BitmapFactory.Options();
-
+        BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = sampleSize;
         options.inPreferredConfig = Bitmap.Config.RGB_565;
 
@@ -551,33 +526,102 @@ public class MainActivity extends Activity {
         }
     }
 
-    // START IMAGE ANALYSIS
+    // GEMINI API KEY
 
     private void startChartScan() {
 
         if (selectedImageUri == null) {
-            Toast.makeText(
-                    this,
+            Toast.makeText(this,
                     "Choose a chart screenshot first.",
-                    Toast.LENGTH_SHORT
-            ).show();
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String savedKey = getSharedPreferences(
+                "piphunter_secure_test",
+                MODE_PRIVATE
+        ).getString("gemini_api_key", "");
+
+        if (savedKey == null || savedKey.trim().isEmpty()) {
+            askForGeminiKey();
+        } else {
+            runGeminiScan(savedKey);
+        }
+    }
+
+    private void askForGeminiKey() {
+
+        EditText keyInput = new EditText(this);
+
+        keyInput.setSingleLine(true);
+        keyInput.setHint("Paste your Gemini API key");
+        keyInput.setInputType(
+                InputType.TYPE_CLASS_TEXT
+                        | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setPadding(dp(20), dp(8), dp(20), dp(4));
+        container.addView(keyInput);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Connect Gemini AI")
+                .setMessage(
+                        "Enter your Gemini API key on this phone. "
+                        + "It will be saved locally for personal testing. "
+                        + "Do not share your key with anyone.")
+                .setView(container)
+                .setNegativeButton("CANCEL", (dialog, which) -> {
+                    scanStatus.setText("Gemini connection cancelled.");
+                })
+                .setPositiveButton("SAVE & SCAN", (dialog, which) -> {
+
+                    String key = keyInput.getText()
+                            .toString().trim();
+
+                    if (key.isEmpty()) {
+                        Toast.makeText(this,
+                                "Enter your Gemini API key.",
+                                Toast.LENGTH_LONG).show();
+                        return;
+                    }
+
+                    getSharedPreferences(
+                            "piphunter_secure_test",
+                            MODE_PRIVATE
+                    ).edit()
+                            .putString("gemini_api_key", key)
+                            .apply();
+
+                    runGeminiScan(key);
+                })
+                .show();
+    }
+
+    // RUN REAL GEMINI VISION ANALYSIS
+
+    private void runGeminiScan(String apiKey) {
+
+        if (selectedImageUri == null) {
+            Toast.makeText(this,
+                    "Choose a chart screenshot first.",
+                    Toast.LENGTH_SHORT).show();
             return;
         }
 
         scanButton.setEnabled(false);
-        scanButton.setText("ANALYZING IMAGE...");
+        scanButton.setText("GEMINI AI ANALYZING...");
         scanButton.setAlpha(0.65f);
 
         scanBeamView.startScanning();
 
         scanStatus.setText(
-                "SCANNING  •  Checking screenshot quality...");
+                "ONLINE AI • Sending chart to Gemini...");
 
         decisionText.setText("WAIT");
         decisionText.setTextColor(gold);
 
         explanationText.setText(
-                "Analysis is running. Please wait.");
+                "Gemini is studying the chart. Please wait.");
 
         entryText.setText("—");
         stopLossText.setText("—");
@@ -595,14 +639,20 @@ public class MainActivity extends Activity {
             try {
 
                 bitmap = loadBitmap(imageUri);
-                result = analysisEngine.analyze(bitmap);
+
+                result = new GeminiVisionAnalyzer()
+                        .analyze(bitmap, apiKey);
 
             } catch (Exception e) {
 
+                String message = e.getMessage();
+
+                if (message == null || message.trim().isEmpty()) {
+                    message = "Unknown analysis error.";
+                }
+
                 result = ChartResult.waitForMoreData(
-                        "Could not read this screenshot. " +
-                        "Please choose another image."
-                );
+                        "Gemini analysis failed: " + message);
 
             } finally {
 
@@ -620,22 +670,21 @@ public class MainActivity extends Activity {
                 }
 
                 scanBeamView.stopScanning();
+
                 showAnalysisResult(finalResult);
 
                 scanButton.setEnabled(true);
                 scanButton.setAlpha(1.0f);
-                scanButton.setText("⌕  SCAN CHART");
+                scanButton.setText("⌕  SCAN WITH GEMINI AI");
             });
         });
     }
 
-    // LOAD SCAN IMAGE
+    // LOAD FULL CHART IMAGE
 
     private Bitmap loadBitmap(Uri uri) throws Exception {
 
-        BitmapFactory.Options bounds =
-                new BitmapFactory.Options();
-
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
 
         InputStream firstStream =
@@ -646,8 +695,7 @@ public class MainActivity extends Activity {
         }
 
         try {
-            BitmapFactory.decodeStream(
-                    firstStream, null, bounds);
+            BitmapFactory.decodeStream(firstStream, null, bounds);
         } finally {
             firstStream.close();
         }
@@ -656,14 +704,11 @@ public class MainActivity extends Activity {
             throw new Exception("Invalid image dimensions");
         }
 
-        BitmapFactory.Options options =
-                new BitmapFactory.Options();
-
+        BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = 1;
 
         while ((bounds.outWidth / options.inSampleSize) > 1800
                 || (bounds.outHeight / options.inSampleSize) > 1800) {
-
             options.inSampleSize *= 2;
         }
 
@@ -716,7 +761,7 @@ public class MainActivity extends Activity {
         }
 
         scanStatus.setText(
-                "SCAN COMPLETE  •  Screenshot checks finished.");
+                "GEMINI AI ANALYSIS COMPLETE.");
     }
 
     // IMAGE PICKER RESULT
@@ -727,8 +772,7 @@ public class MainActivity extends Activity {
             int resultCode,
             Intent data) {
 
-        super.onActivityResult(
-                requestCode, resultCode, data);
+        super.onActivityResult(requestCode, resultCode, data);
 
         if (requestCode == REQUEST_CHART_IMAGE
                 && resultCode == RESULT_OK
@@ -741,14 +785,13 @@ public class MainActivity extends Activity {
 
                 int readPermission =
                         data.getFlags()
-                        & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+                                & Intent.FLAG_GRANT_READ_URI_PERMISSION;
 
                 if (readPermission != 0) {
                     getContentResolver()
                             .takePersistableUriPermission(
                                     newImageUri,
-                                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                            );
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 }
 
                 InputStream testStream =
@@ -772,7 +815,7 @@ public class MainActivity extends Activity {
                 decisionText.setTextColor(gold);
 
                 explanationText.setText(
-                        "Waiting for image analysis.");
+                        "Waiting for Gemini AI analysis.");
 
                 entryText.setText("—");
                 stopLossText.setText("—");
@@ -793,22 +836,19 @@ public class MainActivity extends Activity {
                 imageStatus.setText(
                         "Could not open this image. Choose another screenshot.");
 
-                scanStatus.setText(
-                        "Image selection failed.");
+                scanStatus.setText("Image selection failed.");
 
                 scanButton.setEnabled(false);
                 scanButton.setAlpha(0.55f);
 
-                Toast.makeText(
-                        this,
+                Toast.makeText(this,
                         "Unable to access that image. Please choose another.",
-                        Toast.LENGTH_LONG
-                ).show();
+                        Toast.LENGTH_LONG).show();
             }
         }
     }
 
-    // MOVING SCAN BEAM OVER THE CHART
+    // SCAN BEAM ANIMATION
 
     private class ScanBeamView extends View {
 
@@ -882,19 +922,13 @@ public class MainActivity extends Activity {
                     Math.max(0, y - band),
                     getWidth(),
                     Math.min(getHeight(), y + band),
-                    glowPaint
-            );
+                    glowPaint);
 
-            linePaint.setColor(
-                    Color.rgb(64, 255, 190));
-
+            linePaint.setColor(Color.rgb(64, 255, 190));
             linePaint.setStrokeWidth(dp(2));
 
             canvas.drawLine(
-                    0, y,
-                    getWidth(), y,
-                    linePaint
-            );
+                    0, y, getWidth(), y, linePaint);
 
             linePaint.setColor(
                     Color.argb(110, 55, 205, 255));
@@ -906,8 +940,7 @@ public class MainActivity extends Activity {
                     Math.min(getHeight(), y + dp(3)),
                     getWidth(),
                     Math.min(getHeight(), y + dp(3)),
-                    linePaint
-            );
+                    linePaint);
         }
     }
 
