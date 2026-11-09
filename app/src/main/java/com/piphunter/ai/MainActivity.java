@@ -1,4 +1,3 @@
-
 package com.piphunter.ai;
 
 import android.app.Activity;
@@ -380,6 +379,8 @@ public class MainActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
 
         startActivityForResult(
                 intent, REQUEST_CHART_IMAGE);
@@ -427,7 +428,6 @@ public class MainActivity extends Activity {
             try {
 
                 bitmap = loadBitmap(imageUri);
-
                 result = analysisEngine.analyze(bitmap);
 
             } catch (Exception e) {
@@ -519,12 +519,11 @@ public class MainActivity extends Activity {
         }
     }
 
-    // DISPLAY REAL ENGINE RESULT
+    // DISPLAY RESULT
 
     private void showAnalysisResult(ChartResult result) {
 
         decisionText.setText(result.signal);
-
         explanationText.setText(result.explanation);
 
         entryText.setText(result.entry);
@@ -565,9 +564,33 @@ public class MainActivity extends Activity {
                 && data != null
                 && data.getData() != null) {
 
-            selectedImageUri = data.getData();
+            Uri newImageUri = data.getData();
 
             try {
+
+                int readPermission =
+                        data.getFlags()
+                        & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+
+                if (readPermission != 0) {
+                    getContentResolver()
+                            .takePersistableUriPermission(
+                                    newImageUri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            );
+                }
+
+                // Test that the selected image can be opened.
+                InputStream testStream =
+                        getContentResolver().openInputStream(newImageUri);
+
+                if (testStream == null) {
+                    throw new Exception("Image cannot be opened");
+                }
+
+                testStream.close();
+
+                selectedImageUri = newImageUri;
 
                 chartPreview.setImageURI(selectedImageUri);
 
@@ -581,6 +604,8 @@ public class MainActivity extends Activity {
                 scanButton.setAlpha(1.0f);
 
                 decisionText.setText("WAIT");
+                decisionText.setTextColor(green);
+
                 explanationText.setText(
                         "Waiting for image analysis.");
 
@@ -594,11 +619,23 @@ public class MainActivity extends Activity {
 
                 selectedImageUri = null;
 
+                chartPreview.setImageResource(
+                        android.R.drawable.ic_menu_gallery);
+
                 imageStatus.setText(
                         "Could not open this image. Choose another screenshot.");
 
+                scanStatus.setText(
+                        "Image selection failed.");
+
                 scanButton.setEnabled(false);
                 scanButton.setAlpha(0.55f);
+
+                Toast.makeText(
+                        this,
+                        "Unable to access that image. Please choose another.",
+                        Toast.LENGTH_LONG
+                ).show();
             }
         }
     }
