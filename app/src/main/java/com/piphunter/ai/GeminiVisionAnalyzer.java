@@ -18,7 +18,7 @@ import java.nio.charset.StandardCharsets;
 
 public class GeminiVisionAnalyzer {
 
-    private static final String MODEL = "gemini-2.5-flash";
+    private static final String MODEL = "gemini-3.8-flash";
 
     private static final String ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/models/"
