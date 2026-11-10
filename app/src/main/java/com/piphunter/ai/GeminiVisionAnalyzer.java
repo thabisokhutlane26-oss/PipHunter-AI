@@ -24,6 +24,8 @@ public class GeminiVisionAnalyzer {
             "https://generativelanguage.googleapis.com/v1beta/models/"
                     + MODEL + ":generateContent";
 
+    private static final int MAX_ATTEMPTS = 3;
+
     public ChartResult analyze(Bitmap bitmap, String apiKey)
             throws Exception {
 
@@ -96,161 +98,204 @@ public class GeminiVisionAnalyzer {
         request.put("contents", contents);
         request.put("generationConfig", config);
 
-        HttpURLConnection connection = null;
+        String requestBody = request.toString();
 
-        try {
-            URL url = new URL(ENDPOINT);
+        Exception lastError = null;
 
-            connection = (HttpURLConnection)
-                    url.openConnection();
+        for (int attempt = 1;
+             attempt <= MAX_ATTEMPTS;
+             attempt++) {
 
-            connection.setRequestMethod("POST");
-            connection.setConnectTimeout(20000);
-            connection.setReadTimeout(60000);
-            connection.setDoOutput(true);
+            HttpURLConnection connection = null;
 
-            connection.setRequestProperty(
-                    "Content-Type",
-                    "application/json; charset=UTF-8"
-            );
+            try {
+                URL url = new URL(ENDPOINT);
 
-            connection.setRequestProperty(
-                    "x-goog-api-key",
-                    apiKey.trim()
-            );
+                connection = (HttpURLConnection)
+                        url.openConnection();
 
-            byte[] body = request.toString()
-                    .getBytes(StandardCharsets.UTF_8);
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(20000);
+                connection.setReadTimeout(60000);
+                connection.setDoOutput(true);
 
-            connection.setFixedLengthStreamingMode(body.length);
-
-            try (OutputStream output =
-                         connection.getOutputStream()) {
-                output.write(body);
-            }
-
-            int status = connection.getResponseCode();
-
-            InputStream responseStream =
-                    status >= 200 && status < 300
-                            ? connection.getInputStream()
-                            : connection.getErrorStream();
-
-            String responseText = readAll(responseStream);
-
-            if (status < 200 || status >= 300) {
-                throw new Exception(
-                        explainApiError(status, responseText)
+                connection.setRequestProperty(
+                        "Content-Type",
+                        "application/json; charset=UTF-8"
                 );
-            }
 
-            JSONObject response =
-                    new JSONObject(responseText);
-
-            JSONArray candidates =
-                    response.optJSONArray("candidates");
-
-            if (candidates == null ||
-                    candidates.length() == 0) {
-                throw new Exception(
-                        "Gemini returned no analysis."
+                connection.setRequestProperty(
+                        "x-goog-api-key",
+                        apiKey.trim()
                 );
-            }
 
-            JSONObject candidate =
-                    candidates.getJSONObject(0);
+                byte[] body = requestBody.getBytes(
+                        StandardCharsets.UTF_8
+                );
 
-            JSONObject responseContent =
-                    candidate.optJSONObject("content");
+                connection.setFixedLengthStreamingMode(
+                        body.length
+                );
 
-            JSONArray responseParts =
-                    responseContent == null
-                            ? null
-                            : responseContent.optJSONArray("parts");
+                try (OutputStream output =
+                             connection.getOutputStream()) {
+                    output.write(body);
+                }
 
-            String generatedText = "";
+                int status = connection.getResponseCode();
 
-            if (responseParts != null) {
-                for (int i = 0;
-                     i < responseParts.length(); i++) {
+                InputStream responseStream =
+                        status >= 200 && status < 300
+                                ? connection.getInputStream()
+                                : connection.getErrorStream();
 
-                    generatedText += responseParts
-                            .getJSONObject(i)
-                            .optString("text", "");
+                String responseText = readAll(responseStream);
+
+                if (status == 503 || status == 429) {
+                    lastError = new Exception(
+                            explainApiError(status, responseText)
+                    );
+
+                    if (attempt < MAX_ATTEMPTS) {
+                        Thread.sleep(attempt * 3000L);
+                        continue;
+                    }
+
+                    throw lastError;
+                }
+
+                if (status < 200 || status >= 300) {
+                    throw new Exception(
+                            explainApiError(status, responseText)
+                    );
+                }
+
+                JSONObject response =
+                        new JSONObject(responseText);
+
+                JSONArray candidates =
+                        response.optJSONArray("candidates");
+
+                if (candidates == null ||
+                        candidates.length() == 0) {
+                    throw new Exception(
+                            "Gemini returned no analysis."
+                    );
+                }
+
+                JSONObject candidate =
+                        candidates.getJSONObject(0);
+
+                JSONObject responseContent =
+                        candidate.optJSONObject("content");
+
+                JSONArray responseParts =
+                        responseContent == null
+                                ? null
+                                : responseContent.optJSONArray("parts");
+
+                StringBuilder generatedText =
+                        new StringBuilder();
+
+                if (responseParts != null) {
+                    for (int i = 0;
+                         i < responseParts.length(); i++) {
+
+                        generatedText.append(
+                                responseParts.getJSONObject(i)
+                                        .optString("text", "")
+                        );
+                    }
+                }
+
+                if (generatedText.toString().trim().isEmpty()) {
+                    throw new Exception(
+                            "Gemini returned an empty response."
+                    );
+                }
+
+                JSONObject resultJson =
+                        new JSONObject(
+                                generatedText.toString().trim()
+                        );
+
+                String signal = resultJson
+                        .optString("signal", "WAIT")
+                        .trim()
+                        .toUpperCase();
+
+                if (!signal.equals("BUY") &&
+                        !signal.equals("SELL")) {
+                    signal = "WAIT";
+                }
+
+                String explanation =
+                        "ONLINE GEMINI AI ANALYSIS\n"
+                        + "Instrument: "
+                        + resultJson.optString(
+                                "instrument", "Not identified")
+                        + "\nTimeframe: "
+                        + resultJson.optString(
+                                "timeframe", "Not identified")
+                        + "\n\n"
+                        + resultJson.optString(
+                                "explanation",
+                                "No explanation provided.")
+                        + "\n\nEducational analysis only. "
+                        + "Verify all levels before trading.";
+
+                String entry = resultJson.optString(
+                        "entry", "—");
+
+                String stop = resultJson.optString(
+                        "stopLoss", "—");
+
+                String tp1 = resultJson.optString(
+                        "takeProfit1", "—");
+
+                String tp2 = resultJson.optString(
+                        "takeProfit2", "—");
+
+                String confidence = resultJson.optString(
+                        "confidence", "Not calculated");
+
+                if (signal.equals("WAIT")) {
+                    entry = "—";
+                    stop = "—";
+                    tp1 = "—";
+                    tp2 = "—";
+                }
+
+                return new ChartResult(
+                        signal,
+                        explanation,
+                        entry,
+                        stop,
+                        tp1,
+                        tp2,
+                        confidence
+                );
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new Exception(
+                        "Gemini retry was interrupted."
+                );
+
+            } catch (Exception e) {
+                lastError = e;
+                throw e;
+
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
                 }
             }
-
-            if (generatedText.trim().isEmpty()) {
-                throw new Exception(
-                        "Gemini returned an empty response."
-                );
-            }
-
-            JSONObject resultJson =
-                    new JSONObject(generatedText.trim());
-
-            String signal = resultJson
-                    .optString("signal", "WAIT")
-                    .trim()
-                    .toUpperCase();
-
-            if (!signal.equals("BUY") &&
-                    !signal.equals("SELL")) {
-                signal = "WAIT";
-            }
-
-            String explanation =
-                    "ONLINE GEMINI AI ANALYSIS\n"
-                    + "Instrument: "
-                    + resultJson.optString(
-                            "instrument", "Not identified")
-                    + "\nTimeframe: "
-                    + resultJson.optString(
-                            "timeframe", "Not identified")
-                    + "\n\n"
-                    + resultJson.optString(
-                            "explanation",
-                            "No explanation provided.")
-                    + "\n\nEducational analysis only. "
-                    + "Verify all levels before trading.";
-
-            String entry = resultJson.optString(
-                    "entry", "—");
-
-            String stop = resultJson.optString(
-                    "stopLoss", "—");
-
-            String tp1 = resultJson.optString(
-                    "takeProfit1", "—");
-
-            String tp2 = resultJson.optString(
-                    "takeProfit2", "—");
-
-            String confidence = resultJson.optString(
-                    "confidence", "Not calculated");
-
-            if (signal.equals("WAIT")) {
-                entry = "—";
-                stop = "—";
-                tp1 = "—";
-                tp2 = "—";
-            }
-
-            return new ChartResult(
-                    signal,
-                    explanation,
-                    entry,
-                    stop,
-                    tp1,
-                    tp2,
-                    confidence
-            );
-
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
         }
+
+        throw lastError != null
+                ? lastError
+                : new Exception("Gemini analysis failed.");
     }
 
     private String readAll(InputStream stream)
@@ -303,6 +348,12 @@ public class GeminiVisionAnalyzer {
 
             if (status == 429) {
                 return "Gemini usage limit reached. Try again later: "
+                        + message;
+            }
+
+            if (status == 503) {
+                return "Gemini is temporarily overloaded. "
+                        + "Automatic retries were attempted. "
                         + message;
             }
 
