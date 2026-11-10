@@ -12,7 +12,9 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.IOException;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
@@ -24,7 +26,10 @@ public class GeminiVisionAnalyzer {
             "https://generativelanguage.googleapis.com/v1beta/models/"
                     + MODEL + ":generateContent";
 
-    private static final int MAX_ATTEMPTS = 3;
+    private static final int MAX_ATTEMPTS = 2;
+
+    private static final int CONNECT_TIMEOUT = 30000;
+    private static final int READ_TIMEOUT = 120000;
 
     public ChartResult analyze(Bitmap bitmap, String apiKey)
             throws Exception {
@@ -37,19 +42,65 @@ public class GeminiVisionAnalyzer {
             throw new Exception("Gemini API key is missing.");
         }
 
-        ByteArrayOutputStream imageStream =
-                new ByteArrayOutputStream();
+        // Reduce image dimensions to make uploads faster.
+        Bitmap uploadBitmap = bitmap;
+        boolean createdScaledBitmap = false;
 
-        bitmap.compress(
-                Bitmap.CompressFormat.JPEG,
-                82,
-                imageStream
+        int maxDimension = 1280;
+        int largestSide = Math.max(
+                bitmap.getWidth(),
+                bitmap.getHeight()
         );
 
-        String imageBase64 = Base64.encodeToString(
-                imageStream.toByteArray(),
-                Base64.NO_WRAP
-        );
+        if (largestSide > maxDimension) {
+
+            float scale = (float) maxDimension / largestSide;
+
+            int newWidth = Math.max(
+                    1,
+                    Math.round(bitmap.getWidth() * scale)
+            );
+
+            int newHeight = Math.max(
+                    1,
+                    Math.round(bitmap.getHeight() * scale)
+            );
+
+            uploadBitmap = Bitmap.createScaledBitmap(
+                    bitmap,
+                    newWidth,
+                    newHeight,
+                    true
+            );
+
+            createdScaledBitmap = uploadBitmap != bitmap;
+        }
+
+        String imageBase64;
+
+        try {
+
+            ByteArrayOutputStream imageStream =
+                    new ByteArrayOutputStream();
+
+            uploadBitmap.compress(
+                    Bitmap.CompressFormat.JPEG,
+                    72,
+                    imageStream
+            );
+
+            imageBase64 = Base64.encodeToString(
+                    imageStream.toByteArray(),
+                    Base64.NO_WRAP
+            );
+
+        } finally {
+
+            if (createdScaledBitmap
+                    && !uploadBitmap.isRecycled()) {
+                uploadBitmap.recycle();
+            }
+        }
 
         String prompt =
                 "You are PipHunter AI, a careful forex chart analyst. "
@@ -90,9 +141,13 @@ public class GeminiVisionAnalyzer {
         JSONArray contents = new JSONArray();
         contents.put(content);
 
+        JSONObject thinkingConfig = new JSONObject();
+        thinkingConfig.put("thinkingLevel", "LOW");
+
         JSONObject config = new JSONObject();
         config.put("responseMimeType", "application/json");
-        config.put("temperature", 0.2);
+        config.put("thinkingConfig", thinkingConfig);
+        config.put("maxOutputTokens", 1024);
 
         JSONObject request = new JSONObject();
         request.put("contents", contents);
@@ -109,15 +164,18 @@ public class GeminiVisionAnalyzer {
             HttpURLConnection connection = null;
 
             try {
+
                 URL url = new URL(ENDPOINT);
 
                 connection = (HttpURLConnection)
                         url.openConnection();
 
                 connection.setRequestMethod("POST");
-                connection.setConnectTimeout(20000);
-                connection.setReadTimeout(60000);
+                connection.setConnectTimeout(CONNECT_TIMEOUT);
+                connection.setReadTimeout(READ_TIMEOUT);
                 connection.setDoOutput(true);
+                connection.setDoInput(true);
+                connection.setUseCaches(false);
 
                 connection.setRequestProperty(
                         "Content-Type",
@@ -139,7 +197,9 @@ public class GeminiVisionAnalyzer {
 
                 try (OutputStream output =
                              connection.getOutputStream()) {
+
                     output.write(body);
+                    output.flush();
                 }
 
                 int status = connection.getResponseCode();
@@ -151,13 +211,17 @@ public class GeminiVisionAnalyzer {
 
                 String responseText = readAll(responseStream);
 
-                if (status == 503 || status == 429) {
+                if (status == 429
+                        || status == 503
+                        || status == 408
+                        || status >= 500) {
+
                     lastError = new Exception(
                             explainApiError(status, responseText)
                     );
 
                     if (attempt < MAX_ATTEMPTS) {
-                        Thread.sleep(attempt * 3000L);
+                        Thread.sleep(3000L);
                         continue;
                     }
 
@@ -176,10 +240,11 @@ public class GeminiVisionAnalyzer {
                 JSONArray candidates =
                         response.optJSONArray("candidates");
 
-                if (candidates == null ||
-                        candidates.length() == 0) {
+                if (candidates == null
+                        || candidates.length() == 0) {
+
                     throw new Exception(
-                            "Gemini returned no analysis."
+                            "Gemini returned no analysis. Try another chart."
                     );
                 }
 
@@ -198,8 +263,10 @@ public class GeminiVisionAnalyzer {
                         new StringBuilder();
 
                 if (responseParts != null) {
+
                     for (int i = 0;
-                         i < responseParts.length(); i++) {
+                         i < responseParts.length();
+                         i++) {
 
                         generatedText.append(
                                 responseParts.getJSONObject(i)
@@ -224,8 +291,8 @@ public class GeminiVisionAnalyzer {
                         .trim()
                         .toUpperCase();
 
-                if (!signal.equals("BUY") &&
-                        !signal.equals("SELL")) {
+                if (!signal.equals("BUY")
+                        && !signal.equals("SELL")) {
                     signal = "WAIT";
                 }
 
@@ -276,17 +343,48 @@ public class GeminiVisionAnalyzer {
                         confidence
                 );
 
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new Exception(
-                        "Gemini retry was interrupted."
+            } catch (SocketTimeoutException e) {
+
+                lastError = new Exception(
+                        "Gemini response timed out. "
+                        + "Check your internet connection and try again."
                 );
 
+                if (attempt < MAX_ATTEMPTS) {
+                    Thread.sleep(3000L);
+                    continue;
+                }
+
+                throw lastError;
+
+            } catch (InterruptedException e) {
+
+                Thread.currentThread().interrupt();
+
+                throw new Exception(
+                        "Gemini analysis was interrupted."
+                );
+
+            } catch (IOException e) {
+
+                lastError = new Exception(
+                        "Network connection failed: "
+                                + e.getMessage()
+                );
+
+                if (attempt < MAX_ATTEMPTS) {
+                    Thread.sleep(3000L);
+                    continue;
+                }
+
+                throw lastError;
+
             } catch (Exception e) {
-                lastError = e;
+
                 throw e;
 
             } finally {
+
                 if (connection != null) {
                     connection.disconnect();
                 }
@@ -328,6 +426,7 @@ public class GeminiVisionAnalyzer {
             String body) {
 
         try {
+
             JSONObject json = new JSONObject(body);
 
             JSONObject error =
@@ -352,8 +451,7 @@ public class GeminiVisionAnalyzer {
             }
 
             if (status == 503) {
-                return "Gemini is temporarily overloaded. "
-                        + "Automatic retries were attempted. "
+                return "Gemini is temporarily overloaded: "
                         + message;
             }
 
@@ -361,6 +459,7 @@ public class GeminiVisionAnalyzer {
                     + message;
 
         } catch (Exception ignored) {
+
             return "Gemini API error (" + status + ").";
         }
     }
